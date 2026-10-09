@@ -71,6 +71,18 @@ const normalizeRowState = (rows) =>
     isEditing: Boolean(row.isEditing),
   }));
 
+// The first and last movement rows are always the origin/destination, so their
+// label is derived from position rather than trusted from stored data.
+const getEffectiveStatus = (currentStatus, index, total) => {
+  if (index === 0) {
+    return 'Start';
+  }
+  if (index === total - 1) {
+    return 'End';
+  }
+  return currentStatus || 'Planned';
+};
+
 const createInitialRows = () => [createBlankRow(1)];
 
 const defaultTrainDetails = {
@@ -117,15 +129,22 @@ function MisoTrainMovementPage() {
           trainName: train?.trainName || '',
           routeName: train?.routeName || '',
         });
+        const history = train?.movementHistory || [];
         setMovementRows(
-          (train?.movementHistory || []).map((row, index) => {
-            const alreadyChecked = row.currentStatus === 'Completed' || row.currentStatus === 'Start';
+          history.map((row, index) => {
+            const effectiveStatus = getEffectiveStatus(row.currentStatus, index, history.length);
+            // A row only counts as ticked once it actually carries a recorded
+            // timestamp (set the moment someone checks it) - not just because
+            // its status label happens to read Start/Completed/End.
+            const alreadyChecked = Boolean(row.movementDateTime?.toString().trim());
             return {
               id: `existing-${index}`,
               ...row,
+              currentStatus: effectiveStatus,
               isEditing: false,
               isExisting: true,
               checked: alreadyChecked,
+              // Once a row has been ticked and saved, it can never be unticked again.
               lockedChecked: alreadyChecked,
               errors: {},
             };
@@ -188,10 +207,6 @@ function MisoTrainMovementPage() {
       errors.longitude = 'Longitude is required.';
     }
 
-    if (!row.movementDateTime?.trim()) {
-      errors.movementDateTime = 'Movement Date & Time is required.';
-    }
-
     return errors;
   };
 
@@ -227,19 +242,21 @@ function MisoTrainMovementPage() {
       return;
     }
 
-    const updatedRows = movementRows.map((row) => {
+    const total = movementRows.length;
+    const updatedRows = movementRows.map((row, index) => {
       if (row.id !== rowId) {
         return row;
       }
 
       const nextChecked = !row.checked;
-      const isStartRow = row.currentStatus === 'Start';
+      const effectiveStatus = getEffectiveStatus(row.currentStatus, index, total);
+      const hasFixedStatus = effectiveStatus === 'Start' || effectiveStatus === 'End';
 
       if (nextChecked) {
         return {
           ...row,
           checked: nextChecked,
-          currentStatus: isStartRow ? 'Start' : 'Completed',
+          currentStatus: hasFixedStatus ? effectiveStatus : 'Completed',
           movementDateTime: formatNowAsMovementDateTime(),
         };
       }
@@ -247,7 +264,7 @@ function MisoTrainMovementPage() {
       return {
         ...row,
         checked: nextChecked,
-        currentStatus: isStartRow ? 'Start' : 'Planned',
+        currentStatus: hasFixedStatus ? effectiveStatus : 'Planned',
         movementDateTime: '',
       };
     });
@@ -289,9 +306,14 @@ function MisoTrainMovementPage() {
   };
 
   const handleSaveNewTrain = async (nextRows) => {
+    const normalizedRows = nextRows.map((row, index) => ({
+      ...row,
+      currentStatus: getEffectiveStatus(row.currentStatus, index, nextRows.length),
+    }));
+
     const payload = {
       trainDetails,
-      movementHistory: nextRows.map((row) => ({
+      movementHistory: normalizedRows.map((row) => ({
         currentStation: row.currentStation,
         latitude: row.latitude,
         longitude: row.longitude,
@@ -303,7 +325,7 @@ function MisoTrainMovementPage() {
 
     const response = await saveTrain(payload);
 
-    setMovementRows(normalizeRowState(nextRows));
+    setMovementRows(normalizeRowState(normalizedRows));
     setSaveMessage(response?.message || 'Train details and movement history saved successfully.');
   };
 
