@@ -118,14 +118,18 @@ function MisoTrainMovementPage() {
           routeName: train?.routeName || '',
         });
         setMovementRows(
-          (train?.movementHistory || []).map((row, index) => ({
-            id: `existing-${index}`,
-            ...row,
-            isEditing: false,
-            isExisting: true,
-            checked: row.currentStatus === 'Completed' || row.currentStatus === 'Start',
-            errors: {},
-          })),
+          (train?.movementHistory || []).map((row, index) => {
+            const alreadyChecked = row.currentStatus === 'Completed' || row.currentStatus === 'Start';
+            return {
+              id: `existing-${index}`,
+              ...row,
+              isEditing: false,
+              isExisting: true,
+              checked: alreadyChecked,
+              lockedChecked: alreadyChecked,
+              errors: {},
+            };
+          }),
         );
       })
       .catch((err) => {
@@ -218,6 +222,11 @@ function MisoTrainMovementPage() {
   };
 
   const toggleRowChecked = async (rowId) => {
+    const targetRow = movementRows.find((row) => row.id === rowId);
+    if (!targetRow || targetRow.lockedChecked) {
+      return;
+    }
+
     const updatedRows = movementRows.map((row) => {
       if (row.id !== rowId) {
         return row;
@@ -522,6 +531,7 @@ function MisoTrainMovementPage() {
                           type="checkbox"
                           className="miso-select-checkbox"
                           checked={Boolean(row.checked)}
+                          disabled={Boolean(row.lockedChecked)}
                           onChange={() => toggleRowChecked(row.id)}
                         />
                       </td>
